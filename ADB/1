@@ -1,0 +1,62 @@
+try:
+  #configuration parameters
+  server_name = "jdbc:sqlserver://azuresqllab.database.windows.net"
+  database_name = "mssqldb "
+  url = server_name + ";" + "databaseName=" + database_name + ";"
+  username = "msadmin"
+  password = "msoft@2020"
+  
+  MountPath = "/mnt/ADFandADBHands-on"
+  
+  #Function to read files from ADLS
+  def readFilesFromAdls(fileName="",mntPath="",inferschema = "true",header = "true",ipfilepath = ""):
+    if len(mntPath) == 0:
+      raise Exception("Please enter valid mount name")
+    if len(fileName) == 0:
+      raise Exception("Please enter valid file name")
+    FileName = fileName.split('.')[0]
+    fileFormat = fileName.split('.')[1]
+    filePath = mntPath + "/" + ipfilepath + FileName + "." + fileFormat
+    df = spark.read.format(fileFormat).option('inferschema',inferschema).option("header", header).load(filePath)
+    return df
+  
+  #Function to do union all operation of all the data frames
+  def unionall(dfs):
+    if len(dfs) > 1:
+      return dfs[0].union(unionall(dfs[1:]))
+    else:
+      return dfs[0]
+  
+  #Function to save files into ADLS 
+  def writeFilesIntoAdls(df="",fileName="",mntPath="",ippath=""):
+    source = mntPath + "/" + ippath + "/"
+    tempFilePath = source + "temp/" + fileName
+    filePath = source + fileName
+    df.write.format("csv").save(path = tempFilePath,mode="overwrite")
+    fn = list(filter(lambda x:x[1].endswith("csv"),dbutils.fs.ls(tempFilePath)))[0][1]
+    dbutils.fs.mv(tempFilePath+"/"+fn,filePath)
+    dbutils.fs.rm(source + "temp",True)
+  
+  #Function to write files into ASQL
+  def copyToAsql(df,fileName = "",url = "",username = "",password = "",mode = "overwrite"):
+    if len(url) == 0:
+      raise Exception("Enter valid server and database credentials")
+    if len(username) == 0 or len(password) == 0:
+      raise Exception("Enter valid username and password credentials")
+    if len(fileName) == 0:
+      raise Exception("Enter valid file name")
+    tableName = '[' + 'stg_' + fileName.split('.')[0] + ']'
+    df.write.format("jdbc").mode(mode).option("url", url).option("dbtable", tableName).option("user", username).option("password", password).save()
+    
+  empFiles = ["employees1.parquet","employees2.parquet","employees3.parquet","employees4.parquet","employees5.parquet","employees6.parquet"]
+  empDf = []
+  for employee in empFiles:
+    df = readFilesFromAdls(fileName = employee,mntPath = MountPath)
+    empDf.append(df)
+  emp = unionall(empDf).distinct()
+  emp.show()
+  FileName = "employee_parquet_" + dbutils.widgets.get("empno") +".csv"
+  writeFilesIntoAdls(df=emp,fileName=FileName,mntPath=MountPath,ippath=dbutils.widgets.get("empno"))
+  copyToAsql(df=emp,fileName = Filename,url = url,username = username,password = password)
+except Exception as x:
+  print(x)
